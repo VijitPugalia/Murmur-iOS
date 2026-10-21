@@ -59,7 +59,7 @@ struct ContentView: View {
                                 .accessibilityLabel("Editable transcript")
                             HStack {
                                 Button { copy(dictation.text) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                                Button { dictation.save(dictation.text); feedback = "Saved to Clips" } label: {
+                                Button { if dictation.save(dictation.text) { feedback = "Saved to Clips" } } label: {
                                     Label("Save", systemImage: "bookmark")
                                 }.disabled(!dictation.storageReady)
                                 ShareLink(item: dictation.text) { Image(systemName: "square.and.arrow.up") }
@@ -124,18 +124,22 @@ struct ContentView: View {
                     Text("Paste or type text you want to use again.").foregroundStyle(.secondary)
                     TextEditor(text: $clipText).accessibilityLabel("New clip text")
                     PasteButton(payloadType: String.self) { strings in clipText = strings.joined(separator: "\n") }
+                    if let error = dictation.error { Text(error).foregroundStyle(.red).font(.footnote) }
                 }.padding()
                 .navigationTitle("New clip")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { addClip = false } }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") { dictation.save(clipText); clipText = ""; addClip = false }
+                        Button("Save") {
+                            if dictation.save(clipText) { clipText = ""; addClip = false }
+                        }
                             .disabled(clipText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !dictation.storageReady)
                     }
                 }
             }
         }
         .onAppear { dictation.onFinished = { value in if saveHistory { dictation.save(value) } } }
+        .onChange(of: dictation.text) { _ in dictation.shareEdits() }
     }
 
     private var recordingLabel: String {

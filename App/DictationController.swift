@@ -193,23 +193,31 @@ final class DictationController: ObservableObject {
         catch { self.error = "Could not share the transcript with the keyboard: \(error.localizedDescription)" }
     }
 
-    func save(_ value: String) {
+    func shareEdits() {
+        guard !busy else { return }
+        sessionID = UUID()
+        phase = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "idle" : "ready"
+        publish()
+    }
+
+    @discardableResult
+    func save(_ value: String) -> Bool {
         updateClips(ClipRules.adding(value, to: clips))
     }
-    func delete(_ clip: Clip) { updateClips(clips.filter { $0.id != clip.id }) }
+    func delete(_ clip: Clip) { _ = updateClips(clips.filter { $0.id != clip.id }) }
     func pin(_ clip: Clip) {
         var updated = clips
         if let index = updated.firstIndex(where: { $0.id == clip.id }) { updated[index].pinned.toggle() }
-        updateClips(updated)
+        _ = updateClips(updated)
     }
     func deleteAll() {
-        updateClips([])
+        guard updateClips([]) else { return }
         text = ""
         do { try store?.clearSnapshot() } catch { self.error = error.localizedDescription }
     }
-    private func updateClips(_ updated: [Clip]) {
-        guard storageReady, let store else { error = "Clip storage is unavailable. Copy your text to keep it."; return }
-        do { try store.saveClips(updated); clips = ClipRules.sorted(updated) }
-        catch { self.error = "Could not save clips: \(error.localizedDescription)" }
+    private func updateClips(_ updated: [Clip]) -> Bool {
+        guard storageReady, let store else { error = "Clip storage is unavailable. Copy your text to keep it."; return false }
+        do { try store.saveClips(updated); clips = ClipRules.sorted(updated); return true }
+        catch { self.error = "Could not save clips: \(error.localizedDescription)"; return false }
     }
 }

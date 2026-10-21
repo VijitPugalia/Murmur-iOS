@@ -19,6 +19,7 @@ app_info = {
     "CFBundleShortVersionString": "$(MARKETING_VERSION)", "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
     "LSRequiresIPhoneOS": True, "UILaunchScreen": {},
     "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
+    "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     "NSMicrophoneUsageDescription": "Murmur uses your microphone only when you start dictation.",
     "NSSpeechRecognitionUsageDescription": "Murmur turns your speech into text. On-device recognition is preferred; network recognition requires your opt-in.",
     "UIBackgroundModes": ["audio"], "ITSAppUsesNonExemptEncryption": False,
