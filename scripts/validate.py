@@ -19,18 +19,17 @@ def check(condition, message):
     print("PASS: " + message)
 
 project = json.loads((root / "project.json").read_text())
-check(set(project["targets"]) == {"Murmur", "MurmurStandalone", "MurmurKeyboard"}, "Both app variants and keyboard are declared")
-for name in ["App", "Standalone"]:
+check(set(project["targets"]) == {"Murmur", "MurmurKeyboard"}, "One app and its keyboard are declared")
+for name in ["App"]:
     info = plistlib.loads((root / f"Config/{name}.plist").read_bytes())
     check(bool(info.get("NSMicrophoneUsageDescription")) and bool(info.get("NSSpeechRecognitionUsageDescription")), name + " declares speech and microphone permissions")
-check("dependencies" not in project["targets"]["MurmurStandalone"], "Standalone has no extension dependency")
-check("CODE_SIGN_ENTITLEMENTS" not in project["targets"]["MurmurStandalone"]["settings"]["base"], "Standalone does not request App Groups")
+check(project["targets"]["Murmur"]["dependencies"] == [{"target": "MurmurKeyboard", "embed": True}], "Keyboard embedded in the app")
 keyboard = plistlib.loads((root / "Config/Keyboard.plist").read_bytes())
 check(keyboard["NSExtension"]["NSExtensionPointIdentifier"] == "com.apple.keyboard-service", "Keyboard extension point")
 check("import Speech" not in (root / "Keyboard/KeyboardViewController.swift").read_text(), "Recording belongs to containing app")
 if args.ipas:
     ipas = list(args.ipas.glob("*.ipa"))
-    check(len(ipas) == 1 and ipas[0].name == "Murmur-0.1.0.ipa", "Exactly one unified Murmur IPA")
+    check(len(ipas) == 1 and ipas[0].name == "Murmur-0.2.0.ipa", "Exactly one unified Murmur IPA")
     for path in sorted(ipas):
         with zipfile.ZipFile(path) as archive:
             check(archive.testzip() is None, path.name + " ZIP integrity")
@@ -44,5 +43,5 @@ if args.ipas:
             check(len(extensions) == 1, path.name + " includes its keyboard extension")
             extension_info = plistlib.loads(archive.read(extensions[0]))
             check(extension_info["CFBundleIdentifier"].startswith(info["CFBundleIdentifier"] + "."), "Keyboard belongs to the containing app")
-            check(info["CFBundleShortVersionString"] == "0.1.0", path.name + " version")
+            check(info["CFBundleShortVersionString"] == "0.2.0", path.name + " version")
 print(f"{checks} checks passed")

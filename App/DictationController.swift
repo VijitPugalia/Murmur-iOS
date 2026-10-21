@@ -12,6 +12,10 @@ final class DictationController: ObservableObject {
     @Published var clips: [Clip] = []
     @Published var storageReady = false
     @Published var localRecognition = false
+    @Published var sessionEnabled = false
+    @Published var sessionRemaining = 0
+    @Published var latencyMS: Int?
+    private var cloud: CloudSessionController!
     var onFinished: ((String) -> Void)?
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -23,13 +27,9 @@ final class DictationController: ObservableObject {
     private var tapInstalled = false
     private var store: ClipStore?
     private var observers: [NSObjectProtocol] = []
-    var busy: Bool { ["permission", "recording", "finishing"].contains(phase) }
+    var busy: Bool { ["permission", "recording", "finishing", "processing"].contains(phase) }
     var sharingAvailable: Bool {
-        #if STANDALONE
-        return false
-        #else
         return ClipStore.sharedDirectory != nil
-        #endif
     }
 
     init() {
@@ -39,22 +39,49 @@ final class DictationController: ObservableObject {
             storageReady = true
             try store!.clearSnapshot()
         } catch { self.error = "Could not open saved clips: \(error.localizedDescription)" }
+        cloud = CloudSessionController(store: store)
+        cloud.onUpdate = { [weak self] snapshot, seconds in
+            guard let self else { return }
+            self.phase = snapshot.phase; self.text = snapshot.text; self.seconds = seconds
+            self.sessionEnabled = snapshot.sessionToken != nil
+            self.sessionRemaining = max(0, Int(snapshot.sessionExpiresAt?.timeIntervalSinceNow ?? 0))
+            self.message = snapshot.message ?? ""
+            self.latencyMS = snapshot.latencyMS
+            self.error = snapshot.phase == "error" ? snapshot.message : nil
+        }
+        cloud.onResult = { [weak self] text in self?.onFinished?(text) }
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
                 object: nil, queue: .main) { [weak self] notification in
             guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   raw == AVAudioSession.InterruptionType.began.rawValue else { return }
-            Task { @MainActor in self?.stop(reason: "Recording interrupted. Review the captured text.") }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.cloud.active { self.cloud.end(message: "Microphone interrupted. Unfinished dictation cancelled. Activate a new session.") }
+                else { self.stop(reason: "Recording interrupted. Review the captured text.") }
+            }
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,
                 object: nil, queue: .main) { [weak self] notification in
             guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   raw == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
-            Task { @MainActor in self?.stop(reason: "Microphone disconnected. Review the captured text.") }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.cloud.active { self.cloud.end(message: "Microphone disconnected. Activate a new session.") }
+                else { self.stop(reason: "Microphone disconnected. Review the captured text.") }
+            }
         })
     }
 
     func start(localeID: String, allowNetwork: Bool) async {
         guard !busy else { return }
+        if (UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "groq") == "groq" {
+            if !cloud.active {
+                let activated = await activateKeyboardSession(requireSharing: false)
+                guard activated else { return }
+            }
+            if cloud.active { cloud.start() }
+            return
+        }
         error = nil
         phase = "permission"
         let id = UUID()
@@ -67,7 +94,7 @@ final class DictationController: ObservableObject {
         }
         guard sessionID == id, phase == "permission" else { return }
         guard speechStatus == .authorized, microphone else {
-            fail("Allow Microphone and Speech Recognition in iPhone Settings. In LiveContainer, these permissions belong to the host app.")
+            fail("Allow Microphone and Speech Recognition for Murmur in iPhone Settings.")
             return
         }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeID)), recognizer.isAvailable else {
@@ -92,6 +119,9 @@ final class DictationController: ObservableObject {
             bufferRequest.shouldReportPartialResults = true
             bufferRequest.requiresOnDeviceRecognition = localRecognition
             bufferRequest.addsPunctuation = true
+            bufferRequest.contextualStrings = GroqTranscriber.vocabulary(
+                UserDefaults.standard.string(forKey: "personalVocabulary") ?? "Vijit Pugalia")
+                .components(separatedBy: ", ")
             request = bufferRequest
             text = ""
             seconds = 0
@@ -134,6 +164,7 @@ final class DictationController: ObservableObject {
     }
 
     func stop(reason: String? = nil) {
+        if cloud.active { cloud.stop(); return }
         guard phase == "recording" else { return }
         phase = "finishing"
         message = reason ?? "Finishing your transcript…"
@@ -142,14 +173,18 @@ final class DictationController: ObservableObject {
         publish()
         let id = sessionID
         finalizationTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
             guard !Task.isCancelled, let self, self.sessionID == id, self.phase == "finishing" else { return }
-            self.message = "Review the transcript before using it."
+            self.error = "Apple did not return a final transcript within 10 seconds. The text below may be incomplete."
             self.finish()
         }
     }
 
     func cancel() {
+        if cloud.active || phase == "permission" {
+            if cloud.active { cloud.cancel(); return }
+            cloud.end()
+        }
         sessionID = UUID()
         stopAudio()
         task?.cancel(); task = nil; request = nil
@@ -195,10 +230,37 @@ final class DictationController: ObservableObject {
 
     func shareEdits() {
         guard !busy else { return }
+        if cloud.active { cloud.edit(text); return }
         sessionID = UUID()
         phase = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "idle" : "ready"
         publish()
     }
+
+    @discardableResult
+    func activateKeyboardSession(requireSharing: Bool = true) async -> Bool {
+        guard !busy, !cloud.active else { return false }
+        if requireSharing && !sharingAvailable {
+            error = "Keyboard sharing is unavailable. Install through SideStore with the extension and App Group retained."; return false
+        }
+        phase = "permission"; error = nil
+        let activation = UUID(); sessionID = activation
+        do {
+            let defaults = UserDefaults.standard
+            let locale = defaults.string(forKey: "speechLocale") ?? "en-AU"
+            try await cloud.activate(key: APIKeyStore.load(),
+                model: defaults.string(forKey: "groqModel") ?? "whisper-large-v3-turbo",
+                language: locale.hasPrefix("hi") ? "hi" : "en",
+                vocabulary: defaults.string(forKey: "personalVocabulary") ?? "Vijit Pugalia")
+            return sessionID == activation && cloud.active
+        } catch {
+            guard sessionID == activation else { return false }
+            phase = "idle"
+            if !(error is CancellationError) { self.error = error.localizedDescription }
+            return false
+        }
+    }
+
+    func endKeyboardSession() { cloud.end() }
 
     @discardableResult
     func save(_ value: String) -> Bool {

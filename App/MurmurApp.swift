@@ -14,6 +14,7 @@ struct ContentView: View {
     @AppStorage("saveHistory") private var saveHistory = true
     @AppStorage("allowNetwork") private var allowNetwork = false
     @AppStorage("speechLocale") private var speechLocale = "en-AU"
+    @AppStorage("transcriptionProvider") private var provider = "groq"
     @State private var settings = false
     @State private var addClip = false
     @State private var clipText = ""
@@ -40,9 +41,23 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity).frame(minHeight: 116)
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(dictation.phase == "permission" || dictation.phase == "finishing")
+                            .disabled(["permission", "finishing", "processing"].contains(dictation.phase))
                             if dictation.busy {
                                 Button("Cancel recording", role: .cancel) { dictation.cancel() }
+                            }
+                        }
+                        if provider == "groq" {
+                            VStack(alignment: .leading, spacing: 10) {
+                                if dictation.sessionEnabled {
+                                    Label("Microphone active · \(dictation.sessionRemaining)s left", systemImage: "mic.fill")
+                                        .font(.callout).foregroundStyle(.orange)
+                                    Button("End keyboard session", role: .destructive) { dictation.endKeyboardSession() }
+                                } else {
+                                    Button("Activate keyboard session") { Task { await dictation.activateKeyboardSession() } }
+                                        .buttonStyle(.bordered).disabled(dictation.busy)
+                                }
+                                Text("Groq mode keeps the microphone active for up to five minutes so the keyboard can start each dictation. Idle audio is discarded. Only recordings you start are sent to Groq. End the session to turn the microphone off.")
+                                    .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
                         if let error = dictation.error {
@@ -50,7 +65,7 @@ struct ContentView: View {
                         }
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Transcript").font(.headline)
-                            TextEditor(text: $dictation.text)
+                            TextEditor(text: Binding(get: { dictation.text }, set: { dictation.text = $0; dictation.shareEdits() }))
                                 .frame(minHeight: 180)
                                 .padding(8)
                                 .scrollContentBackground(.hidden)
@@ -69,17 +84,16 @@ struct ContentView: View {
                             .disabled(dictation.busy || dictation.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                         if !feedback.isEmpty { Text(feedback).font(.callout).foregroundStyle(.secondary) }
-                        #if STANDALONE
-                        Text("LiveContainer test: dictate here, tap Copy, then paste in your messaging app. The keyboard is available in the separate SideStore build.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        #else
-                        Text("To dictate into another app: start here, switch apps, then choose the Murmur keyboard. Tap Stop there, then Insert. Recordings stop after 55 seconds in this test build.")
+                        if let milliseconds = dictation.latencyMS {
+                            Text(String(format: "Last transcription: %.1f seconds after Stop", Double(milliseconds) / 1000))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Activate a keyboard session here, switch to your messaging app, then choose Murmur with the globe key. Tap Record, speak after Listening appears, then Stop & Insert. Each dictation can last up to 55 seconds.")
                             .font(.footnote).foregroundStyle(.secondary)
                         if !dictation.sharingAvailable {
                             Text("Keyboard sharing is unavailable with this installation. Copy and paste still work. Check the installation guide before testing the keyboard.")
                                 .font(.footnote).foregroundStyle(.orange)
                         }
-                        #endif
                     }.padding(20)
                 }
                 .navigationTitle("Murmur")
@@ -139,7 +153,6 @@ struct ContentView: View {
             }
         }
         .onAppear { dictation.onFinished = { value in if saveHistory { dictation.save(value) } } }
-        .onChange(of: dictation.text) { _ in dictation.shareEdits() }
     }
 
     private var recordingLabel: String {
@@ -147,6 +160,7 @@ struct ContentView: View {
         case "recording": return "Stop · \(dictation.seconds)s"
         case "permission": return "Checking permissions…"
         case "finishing": return "Finishing…"
+        case "processing": return "Transcribing…"
         default: return "Start dictation"
         }
     }
@@ -162,11 +176,20 @@ struct SettingsView: View {
     @AppStorage("saveHistory") private var saveHistory = true
     @AppStorage("allowNetwork") private var allowNetwork = false
     @AppStorage("speechLocale") private var speechLocale = "en-AU"
+    @AppStorage("transcriptionProvider") private var provider = "groq"
+    @AppStorage("groqModel") private var groqModel = "whisper-large-v3-turbo"
+    @AppStorage("personalVocabulary") private var vocabulary = "Vijit Pugalia"
+    @State private var apiKey = ""
+    @State private var keyStatus = ""
     @State private var confirmDelete = false
     var body: some View {
         NavigationStack {
             Form {
                 Section("Dictation") {
+                    Picker("Recognition", selection: $provider) {
+                        Text("Groq Whisper").tag("groq")
+                        Text("Apple (in-app dictation)").tag("apple")
+                    }
                     Picker("Language", selection: $speechLocale) {
                         Text("English (Australia)").tag("en-AU")
                         Text("English (India)").tag("en-IN")
@@ -174,30 +197,58 @@ struct SettingsView: View {
                         Text("English (United Kingdom)").tag("en-GB")
                         Text("Hindi").tag("hi-IN")
                     }
-                    Toggle("Allow Apple network recognition", isOn: $allowNetwork)
-                    Text("Murmur uses on-device recognition when available. Enabling this option allows speech to be sent to Apple if on-device recognition is unavailable. No Murmur server or API key is used.")
+                    if provider == "groq" {
+                        Picker("Model", selection: $groqModel) {
+                            Text("Large V3 Turbo · faster").tag("whisper-large-v3-turbo")
+                            Text("Large V3 · accuracy option").tag("whisper-large-v3")
+                        }
+                        SecureField("Groq API key", text: $apiKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button("Save API key") {
+                            do { try APIKeyStore.save(apiKey); apiKey = ""; keyStatus = "API key saved in Keychain." }
+                            catch { keyStatus = error.localizedDescription }
+                        }.disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Remove saved API key", role: .destructive) {
+                            do { try APIKeyStore.delete(); keyStatus = "API key removed." }
+                            catch { keyStatus = error.localizedDescription }
+                        }
+                        if !keyStatus.isEmpty { Text(keyStatus).font(.footnote) }
+                        Text("Recordings are sent to Groq over the internet after you tap Stop. Your key stays in this app's Keychain, not in the keyboard. Your Groq account's usage limits and charges apply. There is no automatic provider fallback or AI rewriting.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Toggle("Allow Apple network recognition", isOn: $allowNetwork)
+                        Text("Apple mode is for dictation inside Murmur. On-device recognition is preferred; enabling network recognition allows Apple to process speech when local recognition is unavailable.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }.disabled(dictation.busy || dictation.sessionEnabled)
+                Section("Personal vocabulary") {
+                    TextEditor(text: $vocabulary).frame(minHeight: 90).accessibilityLabel("Names and vocabulary")
+                    Text("One name or term per line. These spellings guide recognition; they are not automatic replacements. Keep the list short (up to 24 terms and 400 characters are sent).")
                         .font(.footnote).foregroundStyle(.secondary)
-                }.disabled(dictation.busy)
+                }.disabled(dictation.busy || dictation.sessionEnabled)
                 Section("Saved text") {
                     Toggle("Save completed dictations", isOn: $saveHistory)
                     Text("Keeps the latest 100 unpinned clips, plus your pinned clips. Turning this off affects future dictations; delete existing clips below. The latest transcript remains available for keyboard insertion until you clear it or start again.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("Delete all clips and current transcript", role: .destructive) { confirmDelete = true }
-                        .disabled(dictation.busy)
+                        .disabled(dictation.busy || dictation.sessionEnabled)
                 }
                 Section("Using the keyboard") {
-                    Text("Install the keyboard build directly through SideStore or Sideloadly, keeping its extension. In iPhone Settings → General → Keyboard → Keyboards → Add New Keyboard, choose Murmur. Allow Full Access so it can read the text shared by Murmur. This prototype keyboard makes no network requests.")
-                    Text("LiveContainer cannot register Murmur's keyboard. In LiveContainer, use Copy and Paste instead. Some apps do not permit third-party keyboards.")
+                    Text("Install the single Murmur IPA through SideStore, keeping its extension. In iPhone Settings → General → Keyboard → Keyboards → Add New Keyboard, choose Murmur. Allow Full Access for its shared session and clips. The keyboard itself makes no network requests.")
+                    Text("Choose Groq mode, save a key, then activate a session in Murmur. Switch apps and use Record / Stop & Insert in the keyboard. If iOS ends the session, return to Murmur to activate it again. Some apps do not permit third-party keyboards.")
                 }.font(.footnote)
                 Section("About") {
-                    Text("Murmur · 0.1.0 test build")
+                    Text("Murmur · 0.2.0 test build")
                     Text("Made by Vijit Pugalia").foregroundStyle(.secondary)
-                    Text("No audio files are saved. Clips stay in this installation's storage and may be included in device backups. This app does not monitor your clipboard.")
+                    Text("Groq recordings use temporary audio files, removed after completion, failure, or cancellation. Abandoned temporary files are cleared on next launch. Idle audio is discarded. Clips may be included in device backups. Murmur does not monitor your clipboard.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Settings")
             .toolbar { Button("Done") { dismiss() } }
+            .onAppear {
+                do { keyStatus = try APIKeyStore.load().isEmpty ? "No API key saved." : "A Groq API key is saved." }
+                catch { keyStatus = error.localizedDescription }
+            }
             .confirmationDialog("Delete all saved clips and the current transcript?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete all", role: .destructive) { dictation.deleteAll() }
             }

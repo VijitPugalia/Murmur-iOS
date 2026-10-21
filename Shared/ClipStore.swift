@@ -12,6 +12,11 @@ struct RecordingSnapshot: Codable {
     var phase: String
     var text: String
     var updatedAt: Date = Date()
+    var sessionToken: UUID?
+    var sessionExpiresAt: Date?
+    var message: String?
+    var lastCommandID: UUID?
+    var latencyMS: Int?
 }
 
 struct StopRequest: Codable {
@@ -47,17 +52,12 @@ struct ClipStore {
     let directory: URL
 
     static var sharedDirectory: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
+        AppGroupResolver.directory(base: groupID)
     }
 
     static func appStore() throws -> ClipStore {
-        #if STANDALONE
-        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                               appropriateFor: nil, create: true)
-        #else
         let base = try sharedDirectory ?? FileManager.default.url(for: .applicationSupportDirectory,
                                   in: .userDomainMask, appropriateFor: nil, create: true)
-        #endif
         let directory = base.appendingPathComponent("Murmur", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return ClipStore(directory: directory)
@@ -73,6 +73,8 @@ struct ClipStore {
     func snapshot() throws -> RecordingSnapshot? { try read(RecordingSnapshot.self, name: "session.json") }
     func saveSnapshot(_ snapshot: RecordingSnapshot) throws { try write(snapshot, name: "session.json") }
     func requestStop(_ id: UUID) throws { try write(StopRequest(sessionID: id), name: "stop.json") }
+    func command() throws -> KeyboardCommand? { try read(KeyboardCommand.self, name: "command.json") }
+    func send(_ command: KeyboardCommand) throws { try write(command, name: "command.json") }
     func stopRequested(for id: UUID) -> Bool {
         (try? read(StopRequest.self, name: "stop.json"))?.sessionID == id
     }

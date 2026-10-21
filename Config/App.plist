@@ -23,7 +23,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Murmur uses your microphone only when you start dictation.</string>
+	<string>Murmur uses your microphone when you start dictation or activate a five-minute keyboard session. Idle audio is discarded.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Murmur turns your speech into text. On-device recognition is preferred; network recognition requires your opt-in.</string>
 	<key>UIBackgroundModes</key>

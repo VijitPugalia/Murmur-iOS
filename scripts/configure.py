@@ -20,12 +20,11 @@ app_info = {
     "LSRequiresIPhoneOS": True, "UILaunchScreen": {},
     "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
-    "NSMicrophoneUsageDescription": "Murmur uses your microphone only when you start dictation.",
+    "NSMicrophoneUsageDescription": "Murmur uses your microphone when you start dictation or activate a five-minute keyboard session. Idle audio is discarded.",
     "NSSpeechRecognitionUsageDescription": "Murmur turns your speech into text. On-device recognition is preferred; network recognition requires your opt-in.",
     "UIBackgroundModes": ["audio"], "ITSAppUsesNonExemptEncryption": False,
 }
 plist("Config/App.plist", app_info)
-plist("Config/Standalone.plist", app_info)
 plist("Config/Keyboard.plist", {
     "CFBundleDisplayName": "Murmur", "CFBundleName": "$(PRODUCT_NAME)",
     "CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)",
@@ -38,34 +37,31 @@ plist("Config/Keyboard.plist", {
 })
 plist("Config/Shared.entitlements", {"com.apple.security.application-groups": ["group.com.vijitpugalia.murmur.ios"]})
 
-def app_target(standalone=False):
+def app_target():
     return {
-        "type": "application", "platform": "iOS",
-        "sources": ["App", "Shared"],
+        "type": "application", "platform": "iOS", "sources": ["App", "Shared"],
         "settings": {"base": {
-            "PRODUCT_BUNDLE_IDENTIFIER": "com.vijitpugalia.murmur.ios" + (".standalone" if standalone else ""),
-            "PRODUCT_NAME": "MurmurStandalone" if standalone else "Murmur",
-            "INFOPLIST_FILE": "Config/Standalone.plist" if standalone else "Config/App.plist",
+            "PRODUCT_BUNDLE_IDENTIFIER": "com.vijitpugalia.murmur.ios",
+            "PRODUCT_NAME": "Murmur", "INFOPLIST_FILE": "Config/App.plist",
             "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
-            **({"SWIFT_ACTIVE_COMPILATION_CONDITIONS": "$(inherited) STANDALONE"} if standalone else {
-                "CODE_SIGN_ENTITLEMENTS": "Config/Shared.entitlements"})
+            "CODE_SIGN_ENTITLEMENTS": "Config/Shared.entitlements"
         }},
-        **({} if standalone else {"dependencies": [{"target": "MurmurKeyboard", "embed": True}]})
+        "dependencies": [{"target": "MurmurKeyboard", "embed": True}]
     }
 
 project = {
     "name": "Murmur", "options": {"deploymentTarget": {"iOS": "16.0"}},
     "settings": {"base": {"SWIFT_VERSION": "5.0", "TARGETED_DEVICE_FAMILY": "1,2",
-        "MARKETING_VERSION": "0.1.0", "CURRENT_PROJECT_VERSION": "1",
+        "MARKETING_VERSION": "0.2.0", "CURRENT_PROJECT_VERSION": "2",
         "CODE_SIGN_STYLE": "Automatic", "GENERATE_INFOPLIST_FILE": False}},
     "targets": {
-        "Murmur": app_target(), "MurmurStandalone": app_target(True),
+        "Murmur": app_target(),
         "MurmurKeyboard": {"type": "app-extension", "platform": "iOS", "sources": ["Keyboard", "Shared"],
             "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": "com.vijitpugalia.murmur.ios.keyboard",
                 "INFOPLIST_FILE": "Config/Keyboard.plist", "CODE_SIGN_ENTITLEMENTS": "Config/Shared.entitlements",
                 "APPLICATION_EXTENSION_API_ONLY": True, "SKIP_INSTALL": True}}}
     },
-    "schemes": {name: {"build": {"targets": {name: "all"}}} for name in ["Murmur", "MurmurStandalone"]}
+    "schemes": {name: {"build": {"targets": {name: "all"}}} for name in ["Murmur"]}
 }
 (ROOT / "project.json").write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
 

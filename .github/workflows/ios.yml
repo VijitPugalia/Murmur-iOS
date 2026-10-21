@@ -21,6 +21,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Murmur-iOS
-          path: dist/Murmur-0.1.0.ipa
+          path: dist/Murmur-0.2.0.ipa
           if-no-files-found: error
           retention-days: 14
