@@ -1,0 +1,8 @@
+.DS_Store
+build/
+dist/
+*.xcodeproj/
+*.xcworkspace/
+.gravitas/
+__pycache__/
+*.ipa

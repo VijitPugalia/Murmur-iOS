@@ -1,0 +1,26 @@
+name: Build iPhone test packages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Build, test and package
+        run: bash scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Murmur-iOS-test-packages
+          path: dist/*.ipa
+          if-no-files-found: error
+          retention-days: 14
