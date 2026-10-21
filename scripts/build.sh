@@ -6,21 +6,16 @@ xcodegen generate --spec project.json
 mkdir -p build dist
 swiftc -parse-as-library Shared/ClipStore.swift Tests/CoreTests.swift -o build/core-tests
 build/core-tests
-for scheme in MurmurStandalone Murmur; do
+for scheme in Murmur; do
   xcodebuild -project Murmur.xcodeproj -scheme "$scheme" -configuration Release \
     -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "build/$scheme" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
   package="build/package-$scheme"
   mkdir -p "$package/Payload"
   cp -R "build/$scheme/Build/Products/Release-iphoneos/$scheme.app" "$package/Payload/"
-  if [ "$scheme" = "Murmur" ]; then
     codesign --force --sign - --entitlements Config/Shared.entitlements "$package/Payload/$scheme.app/PlugIns/MurmurKeyboard.appex"
     codesign --force --sign - --entitlements Config/Shared.entitlements "$package/Payload/$scheme.app"
-    name="Murmur-Keyboard-0.1.0.ipa"
-  else
-    codesign --force --sign - "$package/Payload/$scheme.app"
-    name="Murmur-LiveContainer-0.1.0.ipa"
-  fi
+    name="Murmur-0.1.0.ipa"
   # Ad-hoc signatures are for packaging. SideStore must re-sign for device installation.
   codesign --verify --deep --strict "$package/Payload/$scheme.app"
   (cd "$package" && /usr/bin/zip -qry "../../dist/$name" Payload)

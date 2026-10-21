@@ -30,7 +30,7 @@ check(keyboard["NSExtension"]["NSExtensionPointIdentifier"] == "com.apple.keyboa
 check("import Speech" not in (root / "Keyboard/KeyboardViewController.swift").read_text(), "Recording belongs to containing app")
 if args.ipas:
     ipas = list(args.ipas.glob("*.ipa"))
-    check(len(ipas) == 2, "Exactly two IPA packages")
+    check(len(ipas) == 1 and ipas[0].name == "Murmur-0.1.0.ipa", "Exactly one unified Murmur IPA")
     for path in sorted(ipas):
         with zipfile.ZipFile(path) as archive:
             check(archive.testzip() is None, path.name + " ZIP integrity")
@@ -41,6 +41,8 @@ if args.ipas:
             binary = archive.read(executable)
             check(binary[:4] == b"\xcf\xfa\xed\xfe" and struct.unpack("<I", binary[4:8])[0] == 0x0100000C, path.name + " contains arm64 Mach-O executable")
             extensions = [n for n in archive.namelist() if n.endswith(".appex/Info.plist")]
-            check(len(extensions) == (0 if "LiveContainer" in path.name else 1), path.name + " correct extension count")
+            check(len(extensions) == 1, path.name + " includes its keyboard extension")
+            extension_info = plistlib.loads(archive.read(extensions[0]))
+            check(extension_info["CFBundleIdentifier"].startswith(info["CFBundleIdentifier"] + "."), "Keyboard belongs to the containing app")
             check(info["CFBundleShortVersionString"] == "0.1.0", path.name + " version")
 print(f"{checks} checks passed")

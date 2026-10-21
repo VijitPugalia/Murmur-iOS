@@ -1,4 +1,4 @@
-name: Build iPhone test packages
+name: Build Murmur iPhone app
 on:
   push:
     branches: [main]
@@ -20,7 +20,7 @@ jobs:
         run: bash scripts/build.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: Murmur-iOS-test-packages
-          path: dist/*.ipa
+          name: Murmur-iOS
+          path: dist/Murmur-0.1.0.ipa
           if-no-files-found: error
           retention-days: 14
